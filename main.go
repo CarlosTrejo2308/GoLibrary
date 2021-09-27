@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -45,10 +46,46 @@ var Books = []Book{
 func main() {
 	// Create a new HTTP server.
 	http.Handle("/", http.HandlerFunc(ExampleHandler))
-	http.HandleFunc("/books", basicAuth(books))
-	http.HandleFunc("/book/", basicAuth(book))
+	http.HandleFunc("/books", hmacAuth(books))
+	http.HandleFunc("/book/", hmacAuth(book))
 
 	http.ListenAndServe(":8080", nil)
+}
+
+func hmacAuth(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hash := r.Header.Get("X_HASH")
+		ts := r.Header.Get("X_TIMESTAMP")
+		uid := r.Header.Get("X_UID")
+
+		if hash == "" || ts == "" || uid == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, "<h1>Unauthorized</h1>")
+			return
+		}
+
+		secret := []byte("secret")
+
+		newHash := hmac.New(sha256.New, secret)
+
+		n, err := newHash.Write([]byte(ts + uid))
+		if err != nil || n != len([]byte(ts+uid)) {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, "<h1>Internal Server Error</h1>")
+			return
+		}
+
+		expectedHash := fmt.Sprintf("%x", newHash.Sum(nil))
+
+		if hash != expectedHash {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, "<h1>Authentication error</h1>", hash, "-", newHash.Sum(nil))
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+
 }
 
 // basicAuth is a middleware that checks for a valid username and password.
