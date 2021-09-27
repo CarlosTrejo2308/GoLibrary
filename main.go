@@ -46,10 +46,51 @@ var Books = []Book{
 func main() {
 	// Create a new HTTP server.
 	http.Handle("/", http.HandlerFunc(ExampleHandler))
-	http.HandleFunc("/books", hmacAuth(books))
-	http.HandleFunc("/book/", hmacAuth(book))
+	http.HandleFunc("/books", tokenAuth(books))
+	http.HandleFunc("/book/", tokenAuth(book))
 
 	http.ListenAndServe(":8080", nil)
+}
+
+func tokenAuth(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X_TOKEN")
+		if token == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		url := "http://localhost:8085"
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("X_TOKEN", token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, string(body), resp.StatusCode)
+			return
+		}
+
+		if string(body) != "OK" {
+			http.Error(w, string(body), http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+
+	})
 }
 
 func hmacAuth(next http.HandlerFunc) http.HandlerFunc {
